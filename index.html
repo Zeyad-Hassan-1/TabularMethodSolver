@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Boolean Simplifier</title>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #ececec;
+            padding: 25px;
+        }
+
+        .wrapper {
+            background-color: #fff;
+            padding: 18px;
+            border-radius: 5px;
+            box-shadow: 1px 1px 6px rgba(0, 0, 0, 0.08);
+            max-width: 780px;
+            margin: 0 auto;
+        }
+
+        h2 {
+            color: #2d2d2d;
+            text-align: center;
+        }
+
+        label {
+            font-weight: 600;
+            display: block;
+            margin-top: 20px;
+        }
+
+        input {
+            padding: 7px;
+            width: 100%;
+            margin-top: 4px;
+            border: 1px solid #bbb;
+            border-radius: 3px;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 9px 13px;
+            background: #4069c8;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #2a4e99;
+        }
+
+        .output-area {
+            margin-top: 25px;
+            background: #f3faff;
+            border-left: 5px solid #4095c8;
+            padding: 12px;
+            border-radius: 4px;
+        }
+
+        .term-block {
+            font-family: monospace;
+            background: #e0f3f7;
+            padding: 6px;
+            margin: 8px 0;
+            border-left: 4px solid #1b8fa5;
+        }
+
+        .alert {
+            background: #ffdddd;
+            color: #b33a3a;
+            padding: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrapper">
+        <h2>Simplify Logic Using Tabular Method</h2>
+
+        <label for="varCount">How many variables? (2 or more):</label>
+        <input id="varCount" type="number" min="2" value="4">
+
+        <label for="termList">Enter minterms (comma separated):</label>
+        <input id="termList" type="text" placeholder="e.g. 1, 3, 7, 9">
+
+        <button onclick="trySimplify()">Simplify!</button>
+
+        <div id="display" class="output-area"></div>
+    </div>
+
+    <script>
+        function trySimplify() {
+            const outputBox = document.getElementById('display');
+            outputBox.innerHTML = '';
+
+            const numVars = parseInt(document.getElementById('varCount').value, 10);
+            if (isNaN(numVars) || numVars < 2) {
+                outputBox.innerHTML = `<div class="alert">Please enter a valid variable count (at least 2).</div>`;
+                return;
+            }
+
+            // Parse and clean up input
+            const rawInput = document.getElementById('termList').value;
+            const mintermStrings = rawInput.split(',').map(s => s.trim());
+            let mintermList = [];
+            let inputError = false;
+
+            // Parse minterms, show a warning for non-numeric junk
+            mintermStrings.forEach((s, idx) => {
+                let n = parseInt(s, 10);
+                if (isNaN(n) && s.length > 0) {
+                    outputBox.innerHTML += `<div class="alert">Warning: "${s}" at position ${idx + 1} is not a number and will be ignored.</div>`;
+                    inputError = true;
+                } else if (!isNaN(n)) {
+                    mintermList.push(n);
+                }
+            });
+
+            mintermList = mintermList.filter((item, i, arr) => arr.indexOf(item) === i);
+
+            // Validate minterms are in range
+            const maxMinterm = Math.pow(2, numVars) - 1;
+            for (let val of mintermList) {
+                if (val < 0 || val > maxMinterm) {
+                    outputBox.innerHTML += `<div class="alert">Minterm ${val} is invalid for ${numVars} variables (should be 0-${maxMinterm}).</div>`;
+                    return;
+                }
+            }
+            if (mintermList.length === 0) {
+                outputBox.innerHTML += `<div class="alert">No valid minterms provided.</div>`;
+                return;
+            }
+
+            let pool = [];
+            for (let i = 0; i < mintermList.length; i++) {
+                const val = mintermList[i];
+                const bitPattern = val.toString(2).padStart(numVars, '0');
+                pool.push({
+                    bitPattern: bitPattern,
+                    covered: [val],
+                    merged: false
+                });
+            }
+
+            // The list of implicants we can't merge further (the "prime" ones)
+            let primeImplicants = [];
+
+            // We'll keep merging as long as we can merge
+            let keepGoing = true;
+            let round = 1;
+            while (keepGoing) {
+                keepGoing = false;
+                const nextRound = [];
+                // For each pair, try to merge if only 1 bit differs
+                for (let i = 0; i < pool.length; i++) {
+                    for (let j = i + 1; j < pool.length; j++) {
+                        const a = pool[i], b = pool[j];
+                        const diffInfo = getBitDifference(a.bitPattern, b.bitPattern);
+                        if (diffInfo.count === 1) {
+                            const mergedPattern = insertDash(a.bitPattern, diffInfo.index);
+                            if (!nextRound.some(e => e.bitPattern === mergedPattern)) {
+                                nextRound.push({
+                                    bitPattern: mergedPattern,
+                                    covered: Array.from(new Set([...a.covered, ...b.covered])),
+                                    merged: false
+                                });
+                            }
+                            a.merged = true;
+                            b.merged = true;
+                            keepGoing = true;
+                        }
+                    }
+                }
+                // Any pool entry not merged in this round gets promoted to primeImplicants
+                pool.forEach(entry => {
+                    if (!entry.merged) {
+                        if (!primeImplicants.some(e => e.bitPattern === entry.bitPattern)) {
+                            primeImplicants.push(entry);
+                        }
+                    }
+                });
+                pool = nextRound;
+                round++;
+            }
+
+            // Compose the logic expression from our implicants
+            const varNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+                'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+                'U', 'V', 'W', 'X', 'Y', 'Z']
+            const usedVars = varNames.slice(0, numVars);
+
+            // Build the output for each implicant
+            let logicExpressions = [];
+            for (let imp of primeImplicants) {
+                logicExpressions.push(bitPatternToLogic(imp.bitPattern, usedVars));
+            }
+
+            // Final output
+            let html = '';
+            if (primeImplicants.length > 0) {
+                html += '<h4>Prime Implicants ("Non-Mergable" Terms):</h4>';
+                primeImplicants.forEach(imp => {
+                    html += `<div class="term-block">${imp.bitPattern} (covers minterms: ${imp.covered.join(', ')})</div>`;
+                });
+                html += `<p><strong>Final Expression:</strong> F = ${logicExpressions.join(' + ')}</p>`;
+            } else {
+                html += `<div class="alert">No prime implicants found (unexpected error). Please check your input!</div>`;
+            }
+            outputBox.innerHTML += html;
+            // console.log("Prime implicants:", primeImplicants);
+        }
+
+        function getBitDifference(a, b) {
+            let cnt = 0, idx = -1;
+            for (let i = 0; i < a.length; i++) {
+                if (a[i] !== b[i]) {
+                    cnt++;
+                    if (cnt === 1) idx = i; // Only record first difference
+                }
+            }
+            return { count: cnt, index: idx };
+        }
+
+        function insertDash(pattern, idx) {
+            return pattern.substring(0, idx) + '-' + pattern.substring(idx + 1);
+        }
+
+        function bitPatternToLogic(pattern, vars) {
+            let out = '';
+            for (let i = 0; i < pattern.length; i++) {
+                if (pattern[i] === '1') out += vars[i];
+                else if (pattern[i] === '0') out += vars[i] + "'";
+                if (pattern[i] !== '-' && i < pattern.length - 1) out += ' ';
+            }
+            return out.trim();
+        }
+    </script>
+</body>
+
+</html>
